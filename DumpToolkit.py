@@ -796,8 +796,7 @@ def dump_all_xrefs():
     idaapi.msg(f"[{PLUGIN_NAME}] Xrefs dump complete\n")
 
 def dump_all_structures():
-    """Dump ALL defined structures/types"""
-    import ida_struct
+    """Dump ALL defined structures/types using ida_typeinf (IDA 9.0+ compatible)"""
     import ida_typeinf
     
     outdir = ensure_output_dir()
@@ -812,28 +811,51 @@ def dump_all_structures():
     lines.append("")
     
     count = 0
-    idx = idc.get_first_struc_idx()
-    while idx != idaapi.BADADDR:
-        count += 1
-        sid = idc.get_struc_by_idx(idx)
-        name = idc.get_struc_name(sid)
-        size = idc.get_struc_size(sid)
+    
+    # Get the type info library (til)
+    til = ida_typeinf.get_idati()
+    if not til:
+        idaapi.msg(f"[{PLUGIN_NAME}] ERROR: Could not get type library\n")
+        return
+    
+    # Iterate through all local types
+    for ordinal in range(1, ida_typeinf.get_ordinal_count(til) + 1):
+        tinfo = ida_typeinf.tinfo_t()
+        if not tinfo.get_numbered_type(til, ordinal):
+            continue
         
-        lines.append(f"\n[STRUCT] {name} (size: {size} bytes)")
-        lines.append("-" * 60)
+        # Get the type name
+        name = tinfo.get_type_name()
+        if not name:
+            name = f"type_{ordinal}"
         
-        # Get struct members
-        sptr = ida_struct.get_struc(sid)
-        if sptr:
-            for i in range(sptr.memqty):
-                member = sptr.get_member(i)
-                if member:
-                    mname = ida_struct.get_member_name(member.id)
-                    moff = member.soff
-                    msize = ida_struct.get_member_size(member)
-                    lines.append(f"  +0x{moff:04X} {mname} ({msize} bytes)")
-        
-        idx = idc.get_next_struc_idx(idx)
+        # Check if it's a struct or union
+        if tinfo.is_struct() or tinfo.is_union():
+            count += 1
+            size = tinfo.get_size()
+            type_kind = "UNION" if tinfo.is_union() else "STRUCT"
+            
+            lines.append(f"\n[{type_kind}] {name} (size: {size} bytes)")
+            lines.append("-" * 60)
+            
+            # Get struct/union details
+            udt = ida_typeinf.udt_type_data_t()
+            if tinfo.get_udt_details(udt):
+                for i in range(udt.size()):
+                    member = udt[i]
+                    mname = member.name if member.name else f"field_{i}"
+                    moff = member.offset // 8  # offset is in bits
+                    msize = member.size // 8   # size is in bits
+                    
+                    # Get member type as string
+                    mtype_str = ""
+                    if member.type:
+                        mtype_str = member.type.dstr()
+                    
+                    if mtype_str:
+                        lines.append(f"  +0x{moff:04X} {mname} : {mtype_str} ({msize} bytes)")
+                    else:
+                        lines.append(f"  +0x{moff:04X} {mname} ({msize} bytes)")
     
     lines.append("")
     lines.append(f"Total structures: {count}")
