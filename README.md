@@ -1,312 +1,333 @@
-# IDA Plugins Kit
+# DumpToolkit
 
-A comprehensive toolkit for IDA Pro that includes powerful plugins for dumping and analyzing binary executables.
+Dump **everything** from a binary into flat files for offline analysis. Two plugins, one for IDA Pro, one for Binary Ninja — plus CLI lookup tools that search the dumps instantly with zero truncation.
 
-## Overview
+## Repository Structure
 
-This repository contains two main components:
+```
+├── ida/
+│   ├── DumpToolkit.py       # IDA Pro 9.x plugin — 25 dump types
+│   └── ida_lookup.py        # CLI search tool for IDA dumps (22 commands)
+├── binja/
+│   ├── BinjaDumpToolkit.py  # Binary Ninja plugin — 19 dump types
+│   └── binja_lookup.py      # CLI search tool for Binja dumps (24 commands)
+├── IDA_API_DUMP_REFERENCE.md
+└── README.md
+```
 
-1. **DumpToolkit.py** - An IDA Pro plugin that dumps comprehensive information from loaded binaries
-2. **ida_lookup.py** - A command-line tool for searching and analyzing the dumped data
+---
 
-## Requirements
+## Feature Comparison
 
-- **IDA Pro 9.0+** (or compatible versions)
-- **Python 3.x** (for ida_lookup.py)
-- **Hex-Rays Decompiler** (optional, required for decompiled code dumps)
+| Dump Category | IDA | Binja | Output File |
+|---|:---:|:---:|---|
+| Assembly | ✓ | ✓ | `ALL_ASSEMBLY.asm` |
+| Decompiled (pseudocode) | ✓ | ✓ | `ALL_DECOMPILED.c` |
+| Binary Overview | ✓ | ✓ | `ALL_OVERVIEW.txt` |
+| Strings | ✓ | ✓ | `ALL_STRINGS.txt` |
+| Names / Symbols | ✓ | ✓ | `ALL_NAMES.txt` |
+| Imports | ✓ | ✓ | `ALL_IMPORTS.txt` |
+| Exports | ✓ | ✓ | `ALL_EXPORTS.txt` |
+| Segments | ✓ | ✓ | `ALL_SEGMENTS.txt` |
+| Cross-References | ✓ | ✓ | `ALL_XREFS.txt` |
+| Function Details | ✓ | ✓ | `ALL_FUNCTION_DETAILS.txt` / `ALL_FUNCTIONS_DETAIL.txt` |
+| Call Graph | ✓ | ✓ | `ALL_CALL_GRAPH.txt` |
+| String Xrefs | ✓ | ✓ | `ALL_STRING_XREFS.txt` |
+| Data Variables | ✓ | ✓ | `ALL_DATA_VARIABLES.txt` |
+| Comments | ✓ | ✓ | `ALL_COMMENTS.txt` / `ALL_COMMENTS_TAGS.txt` |
+| Types (full type library) | ✓ | ✓ | `ALL_TYPES.txt` |
+| Structures | ✓ | ✓ | `ALL_STRUCTURES.txt` |
+| VTables | ✓ | ✓ | `ALL_VTABLES.txt` |
+| RTTI | ✓ | ✓ | `ALL_RTTI.txt` |
+| IL Pipeline (LLIL→MLIL→HLIL) | — | ✓ | `ALL_IL_PIPELINE.txt` |
+| Problems / Warnings | ✓ | — | `ALL_PROBLEMS.txt` |
+| Try/Catch / SEH Blocks | ✓ | — | `ALL_TRYBLKS.txt` |
+| Fixups / Relocations | ✓ | — | `ALL_FIXUPS.txt` |
+| Patched Bytes | ✓ | — | `ALL_PATCHED_BYTES.txt` |
+| Hidden / Collapsed Ranges | ✓ | — | `ALL_HIDDEN_RANGES.txt` |
+| Bookmarks | ✓ | — | `ALL_BOOKMARKS.txt` |
+| Switch / Jump Tables | ✓ | — | `ALL_SWITCH_TABLES.txt` |
 
-## Installation
+**IDA: 25 dump types** — leverages the full IDA 9.x Python SDK (`ida_hexrays`, `ida_typeinf`, `ida_nalt`, `ida_tryblks`, `ida_fixup`, etc.).
 
-### Installing DumpToolkit Plugin
+**Binary Ninja: 19 dump types** — uses Binary Ninja's HLIL decompiler with 6-strategy fallback, plus the full IL pipeline (LLIL → MLIL → MLIL-SSA → HLIL).
 
-1. **Locate your IDA plugins directory:**
-   - Windows: `%APPDATA%\Hex-Rays\IDA Pro\plugins\`
-   - Linux: `~/.idapro/plugins/`
-   - macOS: `~/.idapro/plugins/`
-   
-   Alternatively, use IDA's installation directory:
-   - `<IDA_INSTALLATION_DIR>/plugins/`
+---
 
-2. **Copy the plugin:**
-   ```bash
-   cp DumpToolkit.py <IDA_PLUGINS_DIR>/
-   ```
+## Key Behaviors
 
-3. **Restart IDA Pro**
-   
-   The plugin will automatically load and display:
-   ```
-   [DumpTookit] Initializing...
-   [DumpTookit] Ready! Right-click for options or Ctrl-Shift-D to dump everything.
-   ```
+- **Decompiled = decompiled only.** `ALL_DECOMPILED.c` contains only successfully decompiled pseudocode. Functions that fail decompilation are skipped — no assembly fallback pollutes the `.c` file. Assembly is in `ALL_ASSEMBLY.asm`.
+- **Skip-existing.** `Dump EVERYTHING` checks each output file before re-dumping. If a file already exists and the function count matches the current database, it is skipped. This makes incremental re-runs fast.
+- **Zero truncation.** All output is dumped in full. The lookup tools print every match — no `... N more results ...` cutoffs.
+- **Progress logging.** Both plugins log percentage progress and are cancellable during long dumps.
 
-### Installing ida_lookup.py
+---
 
-The lookup tool is a standalone Python script that doesn't require installation. Simply ensure Python 3.x is installed:
+## IDA Pro Plugin
+
+### Requirements
+
+- IDA Pro 9.0+ with Hex-Rays decompiler
+- Python 3.x (bundled with IDA)
+
+### Installation
+
+Copy the plugin to your IDA plugins directory:
+
+| OS | Path |
+|---|---|
+| Windows | `C:\Program Files\IDA Professional 9.x\plugins\` |
+| Linux | `~/.idapro/plugins/` |
+| macOS | `~/.idapro/plugins/` |
 
 ```bash
-python3 --version  # Verify Python 3 is installed
+cp ida/DumpToolkit.py <IDA_PLUGINS_DIR>/DumpToolkit.py
 ```
 
-## Usage
+The plugin loads automatically when IDA starts. Look for `[Ida Dumper] Ready! 25 dump types.` in the output window.
 
-### DumpToolkit Plugin
+### Keyboard Shortcuts
 
-Once installed, DumpToolkit adds multiple options to IDA Pro's right-click context menu:
+| Shortcut | Action |
+|---|---|
+| `Ctrl-Shift-D` | Dump EVERYTHING (all 25 dump types) |
+| `Ctrl-Shift-A` | Copy current function's assembly to clipboard |
+| `Ctrl-Shift-C` | Copy current function's decompiled pseudocode to clipboard |
+| `Ctrl-Shift-X` | Copy ALL (assembly + decompiled) to clipboard |
 
-#### Quick Dump Everything
+Additional dump actions are available from the right-click context menu: **DumpToolkit → Dump Assembly / Decompiled / Overview / ...** (all 25 types individually).
 
-Press **Ctrl-Shift-D** to dump all available information from the binary.
+### 25 Dump Types
 
-#### Context Menu Options
+| # | Dump | Description |
+|---|---|---|
+| 1 | Assembly | Full disassembly of every function |
+| 2 | Decompiled | Hex-Rays pseudocode for every function (failures skipped) |
+| 3 | Overview | Binary metadata — entry point, architecture, file hashes, segment map, stats |
+| 4 | Function Details | Per-function: address, size, frame size, flags, local variables, stack vars, register vars |
+| 5 | Call Graph | Complete caller→callee adjacency list |
+| 6 | String Xrefs | Which functions reference each string |
+| 7 | Data Variables | Globals, statics, named data with types and values |
+| 8 | Comments | All comments (regular, repeatable, function, anterior, posterior) |
+| 9 | Types | Full local type library — structs, unions, enums, typedefs, function prototypes |
+| 10 | Strings | All strings with addresses and types |
+| 11 | Names | All named addresses / symbols |
+| 12 | Imports | Imported functions grouped by module |
+| 13 | Exports | Exported symbols with ordinals |
+| 14 | Segments | Segment layout with permissions, classes, and sizes |
+| 15 | VTables | C++ virtual function tables with resolved slot names |
+| 16 | RTTI | C++ RTTI class hierarchy (`Complete Object Locator`, `TypeDescriptor`, inheritance chains) |
+| 17 | Xrefs | Cross-references for every function (code refs, data refs, callers, callees) |
+| 18 | Structures | Struct/union/enum definitions with member offsets and types |
+| 19 | Problems | IDA-flagged issues (auto-analysis warnings, conversion errors) |
+| 20 | Try/Catch | SEH / C++ exception handling blocks (`try_from`→`try_to`, handlers, catch types) |
+| 21 | Fixups | Relocation entries (fixup types, targets, base addresses) |
+| 22 | Patched Bytes | All manually patched bytes (original → patched values) |
+| 23 | Hidden Ranges | Collapsed/hidden code regions |
+| 24 | Bookmarks | User-set bookmarks with descriptions |
+| 25 | Switch Tables | Jump table analysis (cases, targets, default branches) |
 
-Right-click anywhere in IDA to access these features:
+### IDA Lookup Tool
 
-**Copy Actions (for current selection):**
-- **Copy Assembly** (Ctrl-Shift-A) - Copy current function's assembly to clipboard
-- **Copy Decompiled** (Ctrl-Shift-C) - Copy current function's decompiled code to clipboard
-- **Copy ALL** (Ctrl-Shift-X) - Copy both assembly and decompiled code to clipboard
-- **Copy String** - Copy string at current location to clipboard
+```bash
+cd ida/
+python ida_lookup.py <command> [arguments]
+```
 
-**Single Function Dumps:**
-- **Dump Function Assembly** - Save current function's assembly to file
-- **Dump Function Decompiled** - Save current function's decompiled code to file
-- **Dump Function Xrefs** - Save all cross-references for current function
-- **Dump Function (Full)** - Save complete dump of current function
+**Commands:**
 
-**Dump ALL Actions:**
-- **Dump ALL Assembly (.asm)** - Dump all functions as assembly code
-- **Dump ALL Decompiled (.c)** - Dump all functions as decompiled C code
-- **Dump ALL Strings** - Dump all strings found in the binary
-- **Dump ALL Names** - Dump all named addresses
-- **Dump ALL Imports** - Dump all imported functions
-- **Dump ALL Exports** - Dump all exported functions
-- **Dump ALL Segments** - Dump memory segment information
-- **Dump ALL VTables** - Dump all virtual function tables
-- **Dump ALL RTTI** - Dump Run-Time Type Information
-- **Dump ALL Xrefs** - Dump all cross-references
-- **Dump ALL Structures** - Dump all structure definitions
-- **Dump EVERYTHING** - Perform all dumps at once
+```bash
+# Extract function — ASM + decompiled + callers + callees + xrefs
+python ida_lookup.py func 7FF6FDB8EFA0
 
-#### Output Location
+# Search across ALL 25 dump files
+python ida_lookup.py search "CreateFile|OpenFile"
 
-All dumps are saved to the `IDA_DUMPS` directory in the same location as your input file:
+# Targeted searches
+python ida_lookup.py strings "password|secret|key"
+python ida_lookup.py strxrefs "AES|encrypt"
+python ida_lookup.py xrefs 7FF6FDB8EFA0
+python ida_lookup.py callers 7FF6FF42BCB0
+python ida_lookup.py callees 7FF6FF42BCB0
+python ida_lookup.py callgraph 7FF6FDB8EFA0
+python ida_lookup.py overview
+python ida_lookup.py types "SOCKET|HANDLE"
+python ida_lookup.py datavars "g_config"
+python ida_lookup.py funcdetail 7FF6FDB8EFA0
+python ida_lookup.py comments "TODO|FIXME"
+python ida_lookup.py imports "Crypt|Socket"
+python ida_lookup.py exports "DllMain"
+python ida_lookup.py segments
+python ida_lookup.py vtables "CObject"
+python ida_lookup.py rtti "CBase"
+python ida_lookup.py structures "HEADER"
+python ida_lookup.py names "sub_|loc_"
+
+# File utilities
+python ida_lookup.py read c 100 200           # Read lines 100-200 of decompiled
+python ida_lookup.py grep "malloc" asm         # Grep in assembly file
+python ida_lookup.py around c 5000 50          # 50 lines around line 5000
+```
+
+**File aliases:** `c`/`decompiled`/`pseudo`/`hexrays`, `asm`/`assembly`/`disasm`, `strings`/`str`, `xrefs`/`crossrefs`, `names`/`symbols`, `vtables`/`vftable`, `rtti`/`classes`/`typeinfo`, `segments`/`sections`, `imports`/`imp`, `exports`/`exp`, `structures`/`struct`, `types`/`typedef`, `overview`/`triage`/`info`, `func_details`/`funcdetails`/`details`, `call_graph`/`callgraph`/`graph`, `string_xrefs`/`stringxrefs`, `data_vars`/`datavars`/`globals`, `comments`/`cmt`, `problems`/`issues`/`errors`, `tryblks`/`trycatch`/`seh`/`exceptions`, `fixups`/`relocs`, `patched_bytes`/`patches`, `hidden_ranges`/`hidden`/`collapsed`, `bookmarks`/`marks`, `switch_tables`/`switch`/`jumptable`
+
+---
+
+## Binary Ninja Plugin
+
+### Requirements
+
+- Binary Ninja (tested on v5.x)
+- Python 3.x (bundled with Binary Ninja)
+
+### Installation
+
+Copy the plugin to your Binary Ninja plugins directory:
+
+| OS | Path |
+|---|---|
+| Windows | `%APPDATA%\Binary Ninja\plugins\` |
+| Linux | `~/.binaryninja/plugins/` |
+| macOS | `~/Library/Application Support/Binary Ninja/plugins/` |
+
+```bash
+cp binja/BinjaDumpToolkit.py <BINJA_PLUGINS_DIR>/
+```
+
+The plugin auto-registers on load. Access via **Plugins → BinjaDumpToolkit** or right-click a function.
+
+### 19 Dump Types
+
+**From the Plugins menu (BinaryView-level):**
+
+| # | Dump | Description |
+|---|---|---|
+| 1 | Overview | Architecture, file hashes, section map, entry points, stats |
+| 2 | Assembly | Full disassembly of every function |
+| 3 | Decompiled | HLIL pseudocode with recovered types & local vars (failures skipped) |
+| 4 | IL Pipeline | LLIL → MLIL → MLIL-SSA → HLIL per function (the deobfuscation dump) |
+| 5 | Strings | All strings with addresses |
+| 6 | Names | All named symbols |
+| 7 | Imports | Imported functions by module |
+| 8 | Exports | Exported symbols |
+| 9 | Segments | Section/segment layout |
+| 10 | Xrefs | Cross-references (callers/callees) |
+| 11 | Function Details | Locals, stack frame, calling convention, parameters |
+| 12 | Call Graph | Complete caller→callee adjacency list |
+| 13 | String Xrefs | String→function cross-reference map |
+| 14 | Data Variables | Global/static data with types and values |
+| 15 | Comments/Tags | Function/address comments + Binary Ninja tags |
+| 16 | Structures | Struct/union/enum definitions |
+| 17 | Full Types | Full type library — structs, enums, typedefs, function pointers, arrays |
+| 18 | RTTI | C++ RTTI class hierarchy |
+| 19 | VTables | C++ virtual function tables |
+
+**Dump EVERYTHING** runs all 19 sequentially with skip-existing checks.
+
+**Right-click a function:**
+- Copy Assembly / Copy Decompiled / Copy ALL (asm + decompiled + IL pipeline)
+- Dump Function Assembly / Decompiled / Xrefs / IL Pipeline / Full
+
+### Binja Lookup Tool
+
+```bash
+cd binja/
+python binja_lookup.py <command> [arguments]
+```
+
+**Commands:**
+
+```bash
+# Extract function — ASM + decompiled + IL + details + callers + callees
+python binja_lookup.py func 7FF6FDB8EFA0
+
+# Search across ALL 19 dump files
+python binja_lookup.py search "OpenRequest2"
+
+# Targeted searches
+python binja_lookup.py strings "ChaCha20|AES-GCM"
+python binja_lookup.py strxrefs "password"
+python binja_lookup.py xrefs 7FF6FDB71C20
+python binja_lookup.py callers 7FF6FF42BCB0
+python binja_lookup.py callees 7FF6FF42BCB0
+python binja_lookup.py il 7FF6FDB8EFA0
+python binja_lookup.py callgraph 7FF6FDB8EFA0
+python binja_lookup.py funcdetail 7FF6FDB8EFA0
+python binja_lookup.py overview
+python binja_lookup.py types "SOCKET|sockaddr"
+python binja_lookup.py datavars "g_config"
+python binja_lookup.py comments "TODO|fixme"
+python binja_lookup.py imports "Crypt|Socket"
+python binja_lookup.py exports "DllMain"
+python binja_lookup.py segments
+python binja_lookup.py vtables "CObject"
+python binja_lookup.py rtti "CBase"
+python binja_lookup.py structures "HEADER"
+python binja_lookup.py names "sub_|loc_"
+
+# File utilities
+python binja_lookup.py read c 100 200
+python binja_lookup.py grep "CreateFile" asm
+python binja_lookup.py around c 5000 50
+```
+
+**File aliases:** `c`/`decompiled`, `asm`/`assembly`, `strings`/`string`, `strxrefs`/`string_xrefs`/`stringxrefs`, `xrefs`/`xref`, `names`/`name`, `vtables`/`vtable`, `rtti`, `segments`/`segment`, `imports`/`import`, `exports`/`export`, `structures`/`struct`, `types`/`typedef`, `overview`/`triage`/`info`, `datavars`/`data_vars`/`vars`, `callgraph`/`call_graph`/`graph`, `funcdetails`/`func_details`/`functions`, `comments`/`tags`, `il`/`pipeline`/`llil`/`mlil`/`hlil`
+
+---
+
+## Output Structure
+
+Both toolkits dump to a directory next to the analyzed binary:
 
 ```
-<input_file_directory>/
-└── IDA_DUMPS/
+<binary_directory>/
+└── IDA_DUMPS/ or BINJA_DUMPS/
     ├── ALL_ASSEMBLY.asm
     ├── ALL_DECOMPILED.c
+    ├── ALL_OVERVIEW.txt
     ├── ALL_STRINGS.txt
     ├── ALL_NAMES.txt
     ├── ALL_IMPORTS.txt
     ├── ALL_EXPORTS.txt
     ├── ALL_SEGMENTS.txt
+    ├── ALL_XREFS.txt
+    ├── ALL_FUNCTION_DETAILS.txt
+    ├── ALL_CALL_GRAPH.txt
+    ├── ALL_STRING_XREFS.txt
+    ├── ALL_DATA_VARIABLES.txt
+    ├── ALL_COMMENTS.txt
+    ├── ALL_TYPES.txt
+    ├── ALL_STRUCTURES.txt
     ├── ALL_VTABLES.txt
     ├── ALL_RTTI.txt
-    ├── ALL_XREFS.txt
-    ├── ALL_STRUCTURES.txt
-    └── functions/
-        ├── sub_140001000_ASM.txt
-        ├── sub_140001000_DECOMPILED.txt
-        └── ...
+    ├── ALL_IL_PIPELINE.txt         # Binja only
+    ├── ALL_PROBLEMS.txt            # IDA only
+    ├── ALL_TRYBLKS.txt             # IDA only
+    ├── ALL_FIXUPS.txt              # IDA only
+    ├── ALL_PATCHED_BYTES.txt       # IDA only
+    ├── ALL_HIDDEN_RANGES.txt       # IDA only
+    ├── ALL_BOOKMARKS.txt           # IDA only
+    ├── ALL_SWITCH_TABLES.txt       # IDA only
+    ├── function_dumps/             # Individual function files
+    └── function_xrefs/             # Individual xref files
 ```
 
-### ida_lookup.py Tool
+## Workflow
 
-The lookup tool provides powerful search capabilities across all dumped files.
-
-#### Basic Usage
-
-```bash
-python ida_lookup.py <command> [arguments]
-```
-
-#### Available Commands
-
-**Extract Function:**
-```bash
-python ida_lookup.py func <address>
-# Example: python ida_lookup.py func 7FF6FDB8EFA0
-# Extracts both assembly and decompiled code for the function at the specified address
-```
-
-**Search All Files:**
-```bash
-python ida_lookup.py search <pattern>
-# Example: python ida_lookup.py search "OpenRequest2"
-# Searches for the pattern across all dump files
-```
-
-**Search Strings:**
-```bash
-python ida_lookup.py strings <pattern>
-# Example: python ida_lookup.py strings "ChaCha20|AES-GCM"
-# Searches only in ALL_STRINGS.txt using regex pattern
-```
-
-**Find Cross-References:**
-```bash
-python ida_lookup.py xrefs <address>
-# Example: python ida_lookup.py xrefs 7FF6FDB71C20
-# Finds all cross-references to/from the specified address
-```
-
-**Find Function Callers:**
-```bash
-python ida_lookup.py callers <address>
-# Example: python ida_lookup.py callers 7FF6FF42BCB0
-# Shows all functions that call the specified function
-```
-
-**Find Function Callees:**
-```bash
-python ida_lookup.py callees <address>
-# Example: python ida_lookup.py callees 7FF6FF42BCB0
-# Shows all functions called by the specified function
-```
-
-**Read Specific Lines:**
-```bash
-python ida_lookup.py read <file> <start> <end>
-# Example: python ida_lookup.py read ALL_DECOMPILED.c 6676900 6677100
-# Reads lines from start to end in the specified file
-```
-
-**Grep in File:**
-```bash
-python ida_lookup.py grep <pattern> <file>
-# Example: python ida_lookup.py grep "case 0x78" ALL_DECOMPILED.c
-# Searches for pattern in a specific file
-```
-
-**Read Context Around Line:**
-```bash
-python ida_lookup.py around <file> <line> [context]
-# Example: python ida_lookup.py around ALL_DECOMPILED.c 6676949 50
-# Reads 50 lines before and after line 6676949
-```
-
-#### File Aliases
-
-The lookup tool supports convenient file aliases:
-- `c`, `decompiled`, `decompile` → ALL_DECOMPILED.c
-- `asm`, `assembly` → ALL_ASSEMBLY.asm
-- `strings`, `string` → ALL_STRINGS.txt
-- `xrefs`, `xref` → ALL_XREFS.txt
-- `names`, `name` → ALL_NAMES.txt
-- `vtables`, `vtable` → ALL_VTABLES.txt
-
-## Workflow Example
-
-### Complete Analysis Workflow
-
-1. **Open your binary in IDA Pro**
-
-2. **Let IDA complete its analysis**
-   
-3. **Dump everything:**
-   - Press `Ctrl-Shift-D`
-   - Or right-click → "Dump EVERYTHING"
-   
-4. **Analyze dumps with ida_lookup.py:**
+1. **Open binary** in IDA or Binary Ninja
+2. **Wait for analysis** to complete
+3. **Dump everything** — `Ctrl-Shift-D` (IDA) or Plugins → BinjaDumpToolkit → Dump EVERYTHING
+4. **Analyze offline** with the lookup tool:
    ```bash
-   # Search for interesting functions
-   python ida_lookup.py search "crypto"
-   
-   # Look up a specific function
+   python ida_lookup.py search "encrypt"
    python ida_lookup.py func 140001000
-   
-   # Find all strings containing "password"
-   python ida_lookup.py strings "password"
-   
-   # Find who calls a sensitive function
    python ida_lookup.py callers 140002500
    ```
 
-### Quick Function Analysis
-
-1. **In IDA, navigate to a function**
-
-2. **Right-click → "Dump Function (Full)"**
-
-3. **Use ida_lookup.py to explore:**
-   ```bash
-   # View the function
-   python ida_lookup.py func <address>
-   
-   # See who calls it
-   python ida_lookup.py callers <address>
-   
-   # See what it calls
-   python ida_lookup.py callees <address>
-   ```
-
-## Features
-
-### DumpToolkit Features
-
-- ✅ Dump all functions (assembly and decompiled)
-- ✅ Extract strings with cross-references
-- ✅ Export all symbols, imports, and exports
-- ✅ Extract virtual tables (VTables)
-- ✅ Dump RTTI information for C++ classes
-- ✅ Save all cross-references
-- ✅ Export structure definitions
-- ✅ Clipboard integration for quick copying
-- ✅ Keyboard shortcuts for common actions
-- ✅ Progress indicators with user cancellation support
-- ✅ Context menu integration
-
-### ida_lookup Features
-
-- ✅ Fast regex-based searching
-- ✅ Function extraction by address
-- ✅ Cross-reference analysis
-- ✅ Call graph exploration (callers/callees)
-- ✅ Targeted file searching with aliases
-- ✅ Context-aware line reading
-- ✅ Multi-file pattern searching
-
-## Troubleshooting
-
-### Plugin not loading
-
-1. Verify the plugin is in the correct directory
-2. Check IDA's output window for error messages
-3. Ensure you're using IDA Pro 9.0 or compatible version
-
-### Hex-Rays decompiler not available
-
-- Decompiled dumps require the Hex-Rays decompiler plugin
-- If not available, assembly dumps will still work
-- The plugin will display: `[DumpTookit] Hex-Rays decompiler not available!`
-
-### ida_lookup.py can't find files
-
-1. Ensure you've run dumps from DumpToolkit first
-2. By default, ida_lookup.py looks for a `DUMP/` directory in the script's location
-3. Modify the `DUMP_DIR` variable in ida_lookup.py if your dumps are elsewhere:
-   ```python
-   DUMP_DIR = Path("/path/to/your/IDA_DUMPS")
-   ```
-
-## Tips and Best Practices
-
-1. **Dump early, dump often** - Create dumps after major analysis milestones
-2. **Use targeted dumps** - For single functions, use specific dump commands instead of dumping everything
-3. **Leverage regex** - The lookup tool supports powerful regex patterns for complex searches
-4. **Organize dumps** - Consider creating separate dump directories for different analysis sessions
-5. **Clipboard shortcuts** - Use Ctrl-Shift-A/C/X for quick copying during analysis
-
 ## License
 
-This is a collection of IDA Pro plugins and tools. Please respect IDA Pro's licensing terms when using these tools.
+Please respect the licensing terms of IDA Pro and Binary Ninja when using these tools.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
-
-## Support
-
-For issues, questions, or feature requests, please open an issue on GitHub.
+Issues and PRs welcome.
