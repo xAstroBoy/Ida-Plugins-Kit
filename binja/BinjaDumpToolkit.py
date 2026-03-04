@@ -200,231 +200,80 @@ def _lines_to_text(lines) -> List[str]:
 _decompile_diag_count = 0  # module-level diagnostic counter
 
 def get_function_decompiled(bv: BinaryView, func: Function) -> Optional[str]:
-    """Get the HLIL decompiled pseudocode.
+    """Get the decompiled pseudocode for a function using Binary Ninja's API.
 
-    Binary Ninja's HLIL pipeline performs:
-      - Dead code elimination
-      - Constant folding & propagation
-      - Expression simplification
-      - Control flow recovery (if/else/while/for from obfuscated jumps)
-      - Variable recovery & type inference
-      - Copy propagation & dead store elimination
-    All of which IDA's Hex-Rays does NOT do as aggressively.
+    Uses LinearViewObject.single_function_language_representation() — this is
+    the actual Binary Ninja API for getting decompiled output.  It produces
+    exactly what you see in the GUI's Linear View: fully typed, deobfuscated,
+    C-like pseudocode with recovered variables and control flow.
 
-    Tries multiple approaches (v5.2 API):
-      1. func.pseudo_c → LanguageRepresentationFunction.get_linear_lines()
-      2. LinearViewObject.single_function_language_representation()
-      3. hlil.root.lines (structured HLIL tokens)
-      4. hlil.instructions (iterate each HLIL instruction)
-      5. func.hlil_if_available (non-blocking, maybe cached)
-      6. MLIL fallback (still better than raw asm)
+    Falls back to func.hlil if the LinearView API isn't available.
+    Returns None if the function genuinely cannot be decompiled.
     """
     name = func_name(func)
     global _decompile_diag_count
-    _strategy_errors = []  # collect per-strategy error info for diagnostics
 
-    # Build function header (used by strategies that don't include their own)
-    def _build_header():
-        header_lines = []
-        try:
-            ret_type = func.return_type
-            ret_str = str(ret_type) if ret_type else "void"
-            params = ", ".join(
-                f"{p.type} {p.name}" if p.type else p.name
-                for p in func.parameter_vars
-            ) or "void"
-            calling_conv = func.calling_convention
-            cc_str = f" /* {calling_conv.name} */" if calling_conv else ""
-            header_lines.append(f"{ret_str}{cc_str} {name}({params})")
-        except Exception:
-            header_lines.append(f"void {name}(void)")
-        header_lines.append("{")
-
-        # Local variable declarations
-        try:
-            for var in func.vars:
-                try:
-                    if var.source_type == bn.VariableSourceType.StackVariableSourceType:
-                        vtype = str(var.type) if var.type else "int"
-                        header_lines.append(f"    {vtype} {var.name};  // stack[{var.storage:#x}]")
-                    elif var.source_type == bn.VariableSourceType.RegisterVariableSourceType:
-                        vtype = str(var.type) if var.type else "int"
-                        header_lines.append(f"    {vtype} {var.name};  // register")
-                except Exception:
-                    pass
-            if len(header_lines) > 2:
-                header_lines.append("")
-        except Exception:
-            pass
-        return header_lines
-
-    # Strategy 1: func.pseudo_c → LanguageRepresentationFunction.get_linear_lines()
-    # This is the BEST approach — returns clean Pseudo C exactly like the GUI
+    # ── Step 1: Force HLIL analysis to complete ──
+    # Binary Ninja's analysis is lazy/async.  Accessing func.hlil is the
+    # blocking call that waits for decompilation to actually finish.  Without
+    # this, the LinearView API below will return "Loading..." placeholders
+    # for any function whose HLIL hasn't been computed yet.
+    hlil = None
     try:
-        lang_rep = func.pseudo_c
-        if lang_rep is not None:
-            hlil = lang_rep.hlil if hasattr(lang_rep, 'hlil') else func.hlil
-            if hlil is not None and hlil.root is not None:
-                dtl_lines = lang_rep.get_linear_lines(hlil.root)
-                text_lines = _lines_to_text(dtl_lines)
-                if text_lines:
-                    return "\n".join(text_lines)
+        hlil = func.hlil  # blocks until HLIL analysis is done
+    except Exception:
+        pass  # some functions can't be lifted at all — handled below
+
+    # ── Step 2: LinearViewObject.single_function_language_representation ──
+    # Now that HLIL is ready, the LinearView will render actual C pseudocode
+    # instead of "Loading...".  This produces exactly what the GUI shows:
+    # fully typed, deobfuscated code with recovered variables and control flow.
+    try:
+        settings = bn.DisassemblySettings()
+        settings.set_option(bn.DisassemblyOption.ShowAddress, False)
+        lvo = bn.LinearViewObject.single_function_language_representation(func, settings)
+        cursor = bn.LinearViewCursor(lvo)
+        cursor.seek_to_begin()
+
+        out: List[str] = []
+        while not cursor.after_end:
+            for line in cursor.lines:
+                dtl = getattr(line, 'contents', line)
+                tokens = getattr(dtl, 'tokens', None)
+                if tokens is not None:
+                    out.append("".join(t.text for t in tokens))
+                else:
+                    out.append(str(line))
+            if not cursor.next():
+                break
+
+        # Reject if the output is just a "Loading..." placeholder
+        if out:
+            joined = "\n".join(out)
+            if "Loading..." not in joined:
+                return joined
+            elif _decompile_diag_count < 20:
+                log_warn(f"[{PLUGIN_NAME}] LinearView returned 'Loading...' for {name} — falling through")
     except Exception as e:
-        _strategy_errors.append(f"S1_pseudo_c: {type(e).__name__}: {e}")
+        if _decompile_diag_count < 20:
+            log_warn(f"[{PLUGIN_NAME}] LinearView failed for {name} @ 0x{func.start:X}: {type(e).__name__}: {e}")
 
-    # Strategy 2: single_function_language_representation (Linear View per-function)
+    # ── Fallback: render from the HLIL object we already obtained ──
     try:
-        linear = get_function_decompiled_linear(bv, func)
-        if linear:
-            return linear
-    except Exception as e:
-        _strategy_errors.append(f"S2_linear: {type(e).__name__}: {e}")
-
-    # Strategy 3: hlil.root.lines (token-based extraction)
-    try:
-        hlil = func.hlil
         if hlil is not None and hasattr(hlil, 'root') and hlil.root is not None:
             body_lines = _lines_to_text(hlil.root.lines)
             if body_lines:
-                result = _build_header()
-                result.extend(f"    {line}" for line in body_lines)
-                result.append("}")
-                return "\n".join(result)
+                return "\n".join(body_lines)
     except Exception as e:
-        _strategy_errors.append(f"S3_hlil_root: {type(e).__name__}: {e}")
+        if _decompile_diag_count < 20:
+            log_warn(f"[{PLUGIN_NAME}] HLIL render failed for {name} @ 0x{func.start:X}: {type(e).__name__}: {e}")
 
-    # Strategy 4: iterate hlil.instructions directly
-    try:
-        hlil = func.hlil
-        if hlil is not None:
-            body_lines = []
-            for insn in hlil.instructions:
-                # Each instruction can be converted to text via tokens or str()
-                tokens = getattr(insn, 'tokens', None)
-                if tokens is not None:
-                    body_lines.append("    " + "".join(t.text for t in tokens))
-                else:
-                    body_lines.append(f"    {insn}")
-            if body_lines:
-                result = _build_header()
-                result.extend(body_lines)
-                result.append("}")
-                return "\n".join(result)
-    except Exception as e:
-        _strategy_errors.append(f"S4_hlil_insn: {type(e).__name__}: {e}")
-
-    # Strategy 5: hlil_if_available (non-blocking, may already be cached)
-    try:
-        hlil = func.hlil_if_available
-        if hlil is not None:
-            body_lines = []
-            try:
-                if hasattr(hlil, 'root') and hlil.root is not None:
-                    body_lines = [f"    {line}" for line in _lines_to_text(hlil.root.lines)]
-            except Exception:
-                pass
-            if not body_lines:
-                try:
-                    for insn in hlil.instructions:
-                        body_lines.append(f"    {insn}")
-                except Exception:
-                    pass
-            if body_lines:
-                result = _build_header()
-                result.extend(body_lines)
-                result.append("}")
-                return "\n".join(result)
-    except Exception as e:
-        _strategy_errors.append(f"S5_hlil_avail: {type(e).__name__}: {e}")
-
-    # Strategy 6: At least dump MLIL (still much better than raw asm)
-    try:
-        mlil = func.mlil
-        if mlil is not None:
-            body_lines = []
-            for insn in mlil.instructions:
-                body_lines.append(f"    {insn}")
-            if body_lines:
-                result = [f"// MLIL fallback (HLIL unavailable)"]
-                result.extend(_build_header())
-                result.extend(body_lines)
-                result.append("}")
-                return "\n".join(result)
-    except Exception as e:
-        _strategy_errors.append(f"S6_mlil: {type(e).__name__}: {e}")
-
-    # All 6 strategies failed — log first 20 for diagnostics
+    # ── Both failed — function cannot be decompiled ──
     if _decompile_diag_count < 20:
-        log_warn(f"[{PLUGIN_NAME}] ALL 6 strategies failed for {name} @ 0x{func.start:X}: {' | '.join(_strategy_errors)}")
+        log_warn(f"[{PLUGIN_NAME}] Cannot decompile {name} @ 0x{func.start:X}")
         _decompile_diag_count += 1
 
     return None
-
-
-def get_function_decompiled_linear(bv: BinaryView, func: Function) -> Optional[str]:
-    """Get decompiled output via Binary Ninja's Linear View.
-
-    Uses single_function_language_representation for precise per-function output.
-    This is the absolute cleanest representation — it's what you see in the
-    Linear View in the GUI with full type annotations, casts, etc.
-    IDA has nothing equivalent.
-    """
-    # Approach A: single_function_language_representation (precise, per-function)
-    try:
-        settings = bn.DisassemblySettings()
-        settings.set_option(bn.DisassemblyOption.ShowAddress, False)
-        lv = bn.LinearViewObject.single_function_language_representation(func, settings)
-        cursor = bn.LinearViewCursor(lv)
-        cursor.seek_to_begin()
-
-        out = []
-        while not cursor.after_end:
-            cur_lines = cursor.lines
-            if cur_lines:
-                for line in cur_lines:
-                    dtl = getattr(line, 'contents', line)
-                    tokens = getattr(dtl, 'tokens', None)
-                    if tokens is not None:
-                        out.append("".join(t.text for t in tokens))
-                    else:
-                        out.append(str(line))
-            if not cursor.next():
-                break
-
-        if out:
-            return "\n".join(out)
-    except Exception:
-        pass
-
-    # Approach B: Full view cursor seek (fallback if single_function fails)
-    try:
-        settings = bn.DisassemblySettings()
-        settings.set_option(bn.DisassemblyOption.ShowAddress, False)
-        lv = bn.LinearViewObject.language_representation(bv, settings)
-        cursor = bn.LinearViewCursor(lv)
-        cursor.seek_to_address(func.start)
-
-        out = []
-        while cursor.valid:
-            cur_lines = cursor.lines
-            if cur_lines:
-                for line in cur_lines:
-                    dtl = getattr(line, 'contents', line)
-                    addr = getattr(dtl, 'address', 0)
-                    # Stop if we've passed the function
-                    if addr > func.highest_address and len(out) > 2:
-                        return "\n".join(out)
-                    tokens = getattr(dtl, 'tokens', None)
-                    if tokens is not None:
-                        out.append("".join(t.text for t in tokens))
-                    else:
-                        out.append(str(line))
-            if not cursor.next():
-                break
-
-        return "\n".join(out) if out else None
-    except Exception:
-        return None
 
 
 # ============================================================================
@@ -1894,48 +1743,51 @@ _TASK_OUTPUT_FILES = {
 
 def _dump_file_is_valid(outdir: str, filename: str, bv: BinaryView) -> bool:
     """Check if a dump file already exists and looks complete.
-    For function-based dumps (asm, decompiled), verify the function count matches."""
+
+    For function-based dumps we look for the *completion summary* line that
+    only gets written when the dump loop finished.  We do NOT require an
+    exact function-count match because Binary Ninja's analysis can yield
+    slightly different counts between sessions (misaligned-function
+    heuristics, thumb-detection, etc.).  A completed dump is a completed
+    dump — don't waste hours re-dumping 400K functions over a ±0.1% delta.
+    """
     filepath = os.path.join(outdir, filename)
     if not os.path.isfile(filepath):
         return False
     try:
         size = os.path.getsize(filepath)
-        if size < 100:  # trivially small = incomplete
+        if size < 100:  # trivially small = incomplete / empty
             return False
     except Exception:
         return False
-    # For function-count-sensitive dumps, check the summary line
-    if filename in ("ALL_ASSEMBLY.asm", "ALL_DECOMPILED.c"):
-        total_funcs = len(list(bv.functions))
+
+    # For function-count-sensitive dumps, verify the file ran to completion
+    if filename in ("ALL_ASSEMBLY.asm", "ALL_DECOMPILED.c", "ALL_IL_PIPELINE.txt"):
         try:
             with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                # Read last 500 bytes for summary line
-                f.seek(max(0, size - 500))
+                # Read last 1 KB — the summary line is at the very end
+                f.seek(max(0, size - 1024))
                 tail = f.read()
-                # Look for "Total functions: NNN" or "N decompiled" or "N/M functions"
-                import re as _re
-                m = _re.search(r'Total functions:\s*(\d+)', tail)
-                if m:
-                    dumped = int(m.group(1))
-                    if dumped == total_funcs:
-                        return True
-                    return False  # count mismatch
-                m = _re.search(r'(\d+)\s+decompiled', tail)
-                if m:
-                    # Decompiled file — check decompiled+failed = total
-                    m2 = _re.search(r'(\d+)\s+failed', tail)
-                    if m2:
-                        done = int(m.group(1)) + int(m2.group(1))
-                        if done == total_funcs:
-                            return True
-                    return False
-                m = _re.search(r'(\d+)/(\d+)\s+functions', tail)
-                if m and int(m.group(2)) == total_funcs:
-                    return True
-                # Can't verify count — file exists and is non-trivial, accept it
+
+            import re as _re
+            # Assembly:    "; Dump complete: 404319/404319 functions"
+            # Decompiled:  "/* Dump complete: 400000 decompiled, 4319 failed (of 404319) */"
+            # IL pipeline: "/* IL dump complete: 400000/404319 functions (4319 failed) */"
+            # Any of these patterns proves the dump loop finished normally.
+            has_summary = bool(
+                _re.search(r'Dump complete:', tail)
+                or _re.search(r'dump complete:', tail)
+            )
+            if has_summary:
+                log_info(f"[{PLUGIN_NAME}] ✓ Validated existing {filename} (completed dump found)")
                 return True
+
+            # No summary line → dump was interrupted / partial
+            log_info(f"[{PLUGIN_NAME}] ✗ {filename} exists but has no completion summary — will re-dump")
+            return False
         except Exception:
-            return True  # file exists, can't verify, accept it
+            return False  # can't read → re-dump to be safe
+
     return True  # non-function file, exists and non-trivial
 
 
